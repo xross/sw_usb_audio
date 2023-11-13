@@ -30,6 +30,16 @@ USED_MODULES = lib_xua lib_i2c
 #
 # e.g. 2AMi10o10xxsxxx: Audio class 2.0, Asynchronous, I2S Master, input and output enabled (10 channels each), no MIDI, SPDIF output, no SPDIF input, no ADAT
 
+
+INCLUDE_ONLY_IN_nousb_spdif =
+XCC_FLAGS_nousb_spdif = $(BUILD_FLAGS)        	-DXUA_USB_EN=0 -DXUA_SPDIF_RX_EN=1
+
+INCLUDE_ONLY_IN_nousb_adat =
+XCC_FLAGS_nousb_adat = $(BUILD_FLAGS)       	-DXUA_USB_EN=0 -DXUA_ADAT_RX_EN=1
+
+INCLUDE_ONLY_IN_nousb_adat_slave =
+XCC_FLAGS_nousb_adat_slave = $(BUILD_FLAGS)		-DXUA_USB_EN=0 -DXUA_ADAT_RX_EN=1 -DCODEC_MASTER=1
+
 #
 # Supported build configs (Note these make use of the defaults in xua_conf.h)
 #
