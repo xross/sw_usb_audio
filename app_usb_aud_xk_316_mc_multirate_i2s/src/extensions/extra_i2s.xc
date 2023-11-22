@@ -30,8 +30,6 @@
 #define SAMPLE_FREQUENCY         (48000)
 #define MASTER_CLOCK_FREQUENCY   (24576000)
 
-
-
 unsafe chanend uc_i2s;
 
 /* Note, re-using I2S data lines on MC audio board for LR and Bit clocks */
@@ -90,8 +88,6 @@ static void init_fifo(fifo_t &f, int array[size], unsigned size)
     }
 }
 
-
-int count = 0;
 static inline unsigned fifo_pop(fifo_t &f, int array[], int &sample)
 {
     /* Check for FIFO empty */
@@ -109,13 +105,6 @@ static inline unsigned fifo_pop(fifo_t &f, int array[], int &sample)
     if (f.rdPtr >= f.size)
     {
         f.rdPtr = 0;
-    }
-
-    count++;
-    if(count == 400)
-    {
-        printintln(f.fill);
-        count = 0;
     }
 
     return 0;
@@ -233,37 +222,41 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
 
     fifo_t fifo;
 
-    uint64_t fsRatioOld;
-    unsigned inputTime = 0;
-    unsigned lastInputTime = 0;
-    unsigned inputPeriod = 0;
-    unsigned outputTime = 0;
-    unsigned lastOutputTime = 0;
-    unsigned outputPeriod = 0;
-    int64_t outputPeriodFilt = 0;
-    int64_t inputPeriodFilt = 0;
-    int beta = 8;
+    int usbCounter = 0;
+    int i2sCounter = 0;
+    uint64_t fsRatio = (uint64_t) (192/48) << 60;
+
     timer t;
+    unsigned time;
+    const int period = 100000;
+
+    t :> time;
+    time += period;
+
     init_fifo(fifo, srcOutputBuff, sizeof(srcOutputBuff)/sizeof(srcOutputBuff[0]));
 
-    int counter = 0;
-    int firstTime = 1;
     while (1)
     {
         select
         {
+            case t when timerafter(time) :> void:
+
+                if(usbCounter && i2sCounter)
+                {
+                    uint64_t usbCounterFP = usbCounter << 16;
+                    uint64_t i2sCounterFP = i2sCounter << 16;
+                    usbCounter = 0;
+                    i2sCounter = 0;
+                    uint64_t ratio = fixed_div_16(usbCounterFP, i2sCounterFP);
+                    fsRatio = (uint64_t) ratio << (32 + 12);
+                }
+                time += period;
+
+                break;
+
             case inuint_byref(c, tmp):
 
-                t :> inputTime;
-                inputPeriod = inputTime > lastInputTime ? inputTime-lastInputTime:lastInputTime-inputTime;
-                lastInputTime = inputTime;
-
-                inputPeriod-=5;
-                inputPeriod <<= 16;
-                inputPeriodFilt = (inputPeriodFilt << beta) - inputPeriodFilt;
-                inputPeriodFilt += inputPeriod;
-                inputPeriodFilt >>= beta;
-                inputPeriod = inputPeriodFilt >> 16;
+                usbCounter++;
 
                 /* Receive samples from USB audio (other side of the UserBufferManagement() comms */
 #pragma loop unroll
@@ -285,19 +278,6 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
                 if(sampleIdx == SRC_N_IN_SAMPLES)
                 {
                     sampleIdx = 0;
-                    unsigned op = outputPeriod << 16;
-                    unsigned ip = inputPeriod << 16;
-                    uint64_t ratio = fixed_div_16(op, ip);
-                    uint64_t fsRatio = (uint64_t) ratio << (32 + 12);
-
-                    counter++;
-                    if(counter == 50)
-                    {
-                    //printintln(inputPeriod);
-                    //printintln(outputPeriod);
-                    //printf("%lld\n", fsRatio);
-                    counter = 0;
-                    }
 
                     /* Send samples to SRC tasks. This function adds returned sample to FIFO */
                     trigger_src(c_src, srcInputBuff, fifo, srcOutputBuff, fsRatio);
@@ -327,24 +307,7 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
                 int error = 0;
                 int sample;
 
-                t :> outputTime;
-                outputPeriod = outputTime > lastOutputTime ? outputTime-lastOutputTime:lastOutputTime-outputTime;
-                lastOutputTime = outputTime;
-
-                if(firstTime)
-                {
-                    firstTime = 0;
-                    outputPeriodFilt = outputPeriod << 16;
-                }
-                else
-                {
-                    outputPeriod <<= 16;
-                    outputPeriodFilt = (outputPeriodFilt << beta) - outputPeriodFilt;
-                    outputPeriodFilt += outputPeriod;
-                    outputPeriodFilt >>= beta;
-
-                    outputPeriod = outputPeriodFilt >> 16;
-                }
+                i2sCounter++;
 
                 /* Provide samples from the SRC output FIFO */
                 for(size_t i = 0; i < EXTRA_I2S_CHAN_COUNT_OUT; i++)
@@ -416,7 +379,7 @@ void src_task(streaming chanend c, int instance)
 
     ssrc_init(inputFsCode, outputFsCode, sSSRCCtrl, SRC_CHANNELS_PER_INSTANCE, SRC_N_IN_SAMPLES, SRC_DITHER_SETTING);
 #endif
-    int count = 0;
+
     while(1)
     {
         uint64_t fsRatio_;
