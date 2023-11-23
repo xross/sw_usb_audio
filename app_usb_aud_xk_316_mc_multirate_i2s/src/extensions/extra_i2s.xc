@@ -37,8 +37,8 @@ unsafe chanend uc_i2s;
 #if 1
 on tile[1]: out buffered port:32 p_i2s_dout[1] = {PORT_I2S_DAC1};
 on tile[1]: in buffered port:32 p_i2s_din[1] = {PORT_I2S_ADC1};
-on tile[1]: out port p_i2s_bclk =               PORT_I2S_BCLK;
-on tile[1]: out buffered port:32 p_i2s_lrclk =  PORT_I2S_LRCLK;
+on tile[1]: in port p_i2s_bclk =               PORT_I2S_DAC2;
+on tile[1]: in buffered port:32 p_i2s_lrclk =  PORT_I2S_DAC3;
 #else
 on tile[1]: out buffered port:32 p_i2s_dout[1] = {PORT_I2S_DAC1};
 on tile[1]: out port p_i2s_bclk =               PORT_I2S_DAC2;
@@ -57,7 +57,7 @@ extern in port p_mclk_in;
 #define     SRC_DITHER_SETTING            (0)   // Enables or disables quantisation of output with dithering to 24b
 #define     SRC_MAX_NUM_SAMPS_OUT         (SRC_N_OUT_IN_RATIO_MAX * SRC_N_IN_SAMPLES)
 #define     SRC_OUT_BUFF_SIZE             (SRC_CHANNELS_PER_INSTANCE * SRC_MAX_NUM_SAMPS_OUT) // Size of output buffer for SRC for each instance
-#define     SRC_OUT_FIFO_SIZE             (SRC_N_CHANNELS * SRC_MAX_NUM_SAMPS_OUT * 8 * 8)        // Size of output FIFO for SRC
+#define     SRC_OUT_FIFO_SIZE             (SRC_N_CHANNELS * SRC_MAX_NUM_SAMPS_OUT * 8)        // Size of output FIFO for SRC
 
 /* Stuff that must be defined for lib_src */
 #define SSRC_N_IN_SAMPLES                 (SRC_N_IN_SAMPLES) /* Used by SRC_STACK_LENGTH_MULT in src_mrhf_ssrc.h */
@@ -121,6 +121,7 @@ static inline unsigned fifo_push(fifo_t &f, int array[], const int sample)
 
     array[f.wrPtr] = sample;
     f.wrPtr++;
+#pragma unsafe-arrays
     f.fill++;
 
     /* Check for wrap */
@@ -205,11 +206,10 @@ static inline void trigger_src(streaming chanend c_src[SRC_N_INSTANCES],
     }
 }
 
- int64_t fixed_div_16(int32_t x, int32_t y)
-  {
+int64_t fixed_div_16(int32_t x, int32_t y)
+{
     return ((int64_t)x * (1 << 16)) / y;
-  }
-
+}
 
 void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c_src[SRC_N_INSTANCES])
 {
@@ -416,20 +416,21 @@ void i2s_driver(chanend c)
     interface i2s_frame_callback_if i_i2s;
     streaming chan c_src[SRC_N_INSTANCES];
 
-    set_clock_on(clk_bclk);
+    //set_clock_on(clk_bclk);
 
-    unsigned mclk_port;
-    int mclk_bclk_ratio = (MASTER_CLOCK_FREQUENCY / (SAMPLE_FREQUENCY*2*DATA_BITS));
+    //unsigned mclk_port;
+    //int mclk_bclk_ratio = (MASTER_CLOCK_FREQUENCY / (SAMPLE_FREQUENCY*2*DATA_BITS));
 
     /* Inline ASM to allow sharing of master clock port */
-    asm("ldw %0, dp[p_mclk_in]":"=r"(mclk_port));
-    asm("setclk res[%0], %1"::"r"(clk_bclk), "r"(mclk_port));
+    //asm("ldw %0, dp[p_mclk_in]":"=r"(mclk_port));
+    //asm("setclk res[%0], %1"::"r"(clk_bclk), "r"(mclk_port));
 
-    set_clock_div(clk_bclk, mclk_bclk_ratio >> 1);
+    //set_clock_div(clk_bclk, mclk_bclk_ratio >> 1);
 
     par
     {
-        i2s_frame_master_external_clock(i_i2s, p_i2s_dout, 1, p_i2s_din, sizeof(p_i2s_din)/sizeof(p_i2s_din[0]), DATA_BITS, p_i2s_bclk, p_i2s_lrclk, clk_bclk);
+        //i2s_frame_master_external_clock(i_i2s, p_i2s_dout, 1, p_i2s_din, sizeof(p_i2s_din)/sizeof(p_i2s_din[0]), DATA_BITS, p_i2s_bclk, p_i2s_lrclk, clk_bclk);
+        i2s_frame_slave(i_i2s, p_i2s_dout, 1, p_i2s_din, sizeof(p_i2s_din)/sizeof(p_i2s_din[0]), DATA_BITS, p_i2s_bclk, p_i2s_lrclk, clk_bclk);
         i2s_data(i_i2s, c, c_src);
         par (int i=0; i < SRC_N_INSTANCES; i++)
         {
