@@ -88,6 +88,7 @@ static void init_fifo(fifo_t &f, int array[size], unsigned size)
     }
 }
 
+#pragma unsafe-arrays
 static inline unsigned fifo_pop(fifo_t &f, int array[], int &sample)
 {
     /* Check for FIFO empty */
@@ -111,6 +112,7 @@ static inline unsigned fifo_pop(fifo_t &f, int array[], int &sample)
 }
 
 
+#pragma unsafe-arrays
 static inline unsigned fifo_push(fifo_t &f, int array[], const int sample)
 {
     /* Check for FIFO full */
@@ -121,7 +123,6 @@ static inline unsigned fifo_push(fifo_t &f, int array[], const int sample)
 
     array[f.wrPtr] = sample;
     f.wrPtr++;
-#pragma unsafe-arrays
     f.fill++;
 
     /* Check for wrap */
