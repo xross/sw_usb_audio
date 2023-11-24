@@ -34,17 +34,12 @@ unsafe chanend uc_i2s;
 
 /* Note, re-using I2S data lines on MC audio board for LR and Bit clocks */
 
-#if 1
 on tile[1]: out buffered port:32 p_i2s_dout[1] = {PORT_I2S_DAC1};
-on tile[1]: in buffered port:32 p_i2s_din[1] = {PORT_I2S_ADC1};
-on tile[1]: in port p_i2s_bclk =               PORT_I2S_DAC2;
-on tile[1]: in buffered port:32 p_i2s_lrclk =  PORT_I2S_DAC3;
-#else
-on tile[1]: out buffered port:32 p_i2s_dout[1] = {PORT_I2S_DAC1};
-on tile[1]: out port p_i2s_bclk =               PORT_I2S_DAC2;
-on tile[1]: out buffered port:32 p_i2s_lrclk =  PORT_I2S_DAC3;
-#endif
-on tile[1]: clock clk_bclk = XS1_CLKBLK_1;
+on tile[1]: in buffered port:32 p_i2s_din[1] =   {PORT_I2S_ADC1};
+on tile[1]: in port p_i2s_bclk =                 PORT_I2S_DAC2;
+on tile[1]: in buffered port:32 p_i2s_lrclk =    PORT_I2S_DAC3;
+on tile[1]: in port p_off_bclk =                 XS1_PORT_16A;
+on tile[1]: clock clk_bclk =                     XS1_CLKBLK_1;
 
 extern in port p_mclk_in;
 
@@ -88,9 +83,11 @@ static void init_fifo(fifo_t &f, int array[size], unsigned size)
     }
 }
 
-#pragma unsafe-arrays
+#pragma unsafe arrays
 static inline unsigned fifo_pop(fifo_t &f, int array[], int &sample)
 {
+    static int popCounter = 0;
+
     /* Check for FIFO empty */
     if (!f.fill)
     {
@@ -108,11 +105,18 @@ static inline unsigned fifo_pop(fifo_t &f, int array[], int &sample)
         f.rdPtr = 0;
     }
 
+    //popCounter++;
+
+    if(popCounter == 1000000)
+    {
+        printintln(f.fill);
+        popCounter= 0;
+    }
+
     return 0;
 }
 
-
-#pragma unsafe-arrays
+#pragma unsafe arrays
 static inline unsigned fifo_push(fifo_t &f, int array[], const int sample)
 {
     /* Check for FIFO full */
@@ -155,7 +159,7 @@ void UserBufferManagement(unsigned sampsFromUsbToAudio[], unsigned sampsFromAudi
     }
 }
 
-static inline void trigger_src(streaming chanend c_src[SRC_N_INSTANCES],
+static inline int trigger_src(streaming chanend c_src[SRC_N_INSTANCES],
                                 int srcInputBuff[SRC_N_INSTANCES][SRC_N_IN_SAMPLES][SRC_CHANNELS_PER_INSTANCE],
                                 fifo_t &fifo,
                                 int srcOutputBuff[SRC_OUT_FIFO_SIZE], uint64_t fsRatio)
@@ -186,16 +190,16 @@ static inline void trigger_src(streaming chanend c_src[SRC_N_INSTANCES],
         c_src[i] :> nSamps;
     }
 
-#pragma loop unroll
-    for (int i=0; i<SRC_N_INSTANCES; i++)
+    unsigned error = 0;
+    for (int j=0; j < nSamps; j++)
     {
-        unsigned error = 0;
-        for (int j=0; j < nSamps; j++)
-        {
 #pragma loop unroll
-            for (int k=0; k<SRC_CHANNELS_PER_INSTANCE; k++)
+        for (int k=0; k<SRC_CHANNELS_PER_INSTANCE; k++)
+        {
+            int sample;
+#pragma loop unroll
+            for (int i=0; i<SRC_N_INSTANCES; i++)
             {
-                int sample;
                 c_src[i] :> sample;
                 error |= fifo_push(fifo, srcOutputBuff, sample);
             }
@@ -205,12 +209,19 @@ static inline void trigger_src(streaming chanend c_src[SRC_N_INSTANCES],
             }
         }
     }
+
+    return nSamps;
 }
 
 int64_t fixed_div_16(int32_t x, int32_t y)
 {
     return ((int64_t)x * (1 << 16)) / y;
 }
+
+int counter = 0;
+
+#define LIST_LENGTH 5000
+float r[LIST_LENGTH];
 
 void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c_src[SRC_N_INSTANCES])
 {
@@ -227,12 +238,15 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
     int i2sCounter = 0;
     uint64_t fsRatio = (uint64_t) (192/48) << 60;
 
-    timer t;
-    unsigned time;
-    const int period = 100000;
+    float floatRatio =4.0;
 
-    t :> time;
-    time += period;
+    unsigned short lastPt = 0;
+
+    int asrcCounter = 0;
+
+    int counter2 = 0;
+    int phaseError = 0;
+    int phaseErrorInt = 0;
 
     init_fifo(fifo, srcOutputBuff, sizeof(srcOutputBuff)/sizeof(srcOutputBuff[0]));
 
@@ -240,24 +254,7 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
     {
         select
         {
-            case t when timerafter(time) :> void:
-
-                if(usbCounter && i2sCounter)
-                {
-                    uint64_t usbCounterFP = usbCounter << 16;
-                    uint64_t i2sCounterFP = i2sCounter << 16;
-                    usbCounter = 0;
-                    i2sCounter = 0;
-                    uint64_t ratio = fixed_div_16(usbCounterFP, i2sCounterFP);
-                    fsRatio = (uint64_t) ratio << (32 + 12);
-                }
-                time += period;
-
-                break;
-
             case inuint_byref(c, tmp):
-
-                usbCounter++;
 
                 /* Receive samples from USB audio (other side of the UserBufferManagement() comms */
 #pragma loop unroll
@@ -279,9 +276,60 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
                 if(sampleIdx == SRC_N_IN_SAMPLES)
                 {
                     sampleIdx = 0;
+                    usbCounter++;
+
+                    if(usbCounter == 100)
+                    {
+                        unsigned short pt;
+                        asm volatile(" getts %0, res[%1]" : "=r" (pt) : "r" (p_off_bclk));
+
+                        /* The number of bit clocks we expect on the output i2s */
+                        const unsigned short expectedDiff = 128 * 50 * 4;
+
+                        /* The actual number of bit clocks on the output i2s */
+                        int actualDiff = 0;
+
+                        if (porttimeafter(pt, lastPt))
+                        {
+                            actualDiff = -(short)(lastPt - pt);
+                        }
+                        else
+                        {
+                            actualDiff = (short)(pt - lastPt);
+                        }
+                        lastPt = pt;
+
+                        float x;
+
+                        if(counter> 200)
+                        {
+                            int asrcClocks = asrcCounter * 64;
+                            int error = asrcClocks - (int)actualDiff;
+
+                            phaseError += error;
+
+                            float error_p = (float) (phaseError * 0.000001);
+                            float error_i = (float) (phaseErrorInt * 0.00025);
+
+                            x = (error_p + error_i);
+
+                            floatRatio = (4.0 + x);
+
+                            if(floatRatio > 4.001)
+                                floatRatio = 4.001;
+                            if(floatRatio < 3.999)
+                                floatRatio = 3.999;
+
+                            fsRatio = (uint64_t) (floatRatio * (1LL << 60)) ;
+                        }
+
+                        counter++;
+                        usbCounter = 0;
+                        asrcCounter = 0;
+                    }
 
                     /* Send samples to SRC tasks. This function adds returned sample to FIFO */
-                    trigger_src(c_src, srcInputBuff, fifo, srcOutputBuff, fsRatio);
+                    asrcCounter += trigger_src(c_src, srcInputBuff, fifo, srcOutputBuff, fsRatio);
                 }
 
                 break;
@@ -324,7 +372,6 @@ void i2s_data(server i2s_frame_callback_if i_i2s, chanend c, streaming chanend c
                 if(error)
                 {
                     init_fifo(fifo, srcOutputBuff, sizeof(srcOutputBuff)/sizeof(srcOutputBuff[0]));
-                    //printstr("ERR POP\n");
                 }
                 break;
             }
@@ -355,7 +402,7 @@ void src_task(streaming chanend c, int instance)
     {
         unsafe
         {
-            //Set state, stack and coefs into ctrl structure
+            // Set state, stack and coefs into ctrl structure
             sASRCCtrl[ui].psState                   = &sASRCState[ui];
             sASRCCtrl[ui].piStack                   = iASRCStack[ui];
             sASRCCtrl[ui].piADCoefs                 = asrc_adfir_coefs.iASRCADFIRCoefs;
@@ -417,20 +464,10 @@ void i2s_driver(chanend c)
     interface i2s_frame_callback_if i_i2s;
     streaming chan c_src[SRC_N_INSTANCES];
 
-    //set_clock_on(clk_bclk);
-
-    //unsigned mclk_port;
-    //int mclk_bclk_ratio = (MASTER_CLOCK_FREQUENCY / (SAMPLE_FREQUENCY*2*DATA_BITS));
-
-    /* Inline ASM to allow sharing of master clock port */
-    //asm("ldw %0, dp[p_mclk_in]":"=r"(mclk_port));
-    //asm("setclk res[%0], %1"::"r"(clk_bclk), "r"(mclk_port));
-
-    //set_clock_div(clk_bclk, mclk_bclk_ratio >> 1);
+    set_port_clock(p_off_bclk, clk_bclk);
 
     par
     {
-        //i2s_frame_master_external_clock(i_i2s, p_i2s_dout, 1, p_i2s_din, sizeof(p_i2s_din)/sizeof(p_i2s_din[0]), DATA_BITS, p_i2s_bclk, p_i2s_lrclk, clk_bclk);
         i2s_frame_slave(i_i2s, p_i2s_dout, 1, p_i2s_din, sizeof(p_i2s_din)/sizeof(p_i2s_din[0]), DATA_BITS, p_i2s_bclk, p_i2s_lrclk, clk_bclk);
         i2s_data(i_i2s, c, c_src);
         par (int i=0; i < SRC_N_INSTANCES; i++)
