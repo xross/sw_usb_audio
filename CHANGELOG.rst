@@ -1,7 +1,7 @@
 sw_usb_audio Change Log
 =======================
 
-UNRELEASED
+ UNRELEASED
 ----------
 
   * ADDED:     app_usb_aud_xk_316_mc: 2AMi16o16xxxaax_tdm8 build config (ADAT
