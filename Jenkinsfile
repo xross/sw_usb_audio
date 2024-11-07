@@ -1,5 +1,15 @@
 @Library('xmos_jenkins_shared_library@v0.27.0') _
 
+def checkout_shallow()
+{
+    checkout scm: [
+        $class: 'GitSCM',
+        branches: scm.branches,
+        userRemoteConfigs: scm.userRemoteConfigs,
+        extensions: [[$class: 'CloneOption', depth: 1, shallow: true, noTags: false]]
+    ]
+}
+
 // Get XCommon CMake and log a record of the git commit
 def get_xcommon_cmake() {
   sh "git clone -b develop git@github.com:xmos/xcommon_cmake"
@@ -38,7 +48,7 @@ pipeline {
             get_xcommon_cmake()
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
 
               withTools("${env.TOOLS_VERSION}") {
                 withEnv(["XMOS_CMAKE_PATH=${WORKSPACE}/xcommon_cmake"]) {
@@ -92,7 +102,7 @@ pipeline {
             get_xcommon_cmake()
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
 
               withTools("${env.TOOLS_VERSION}") {
                 withEnv(["XMOS_CMAKE_PATH=${WORKSPACE}/xcommon_cmake"]) {
@@ -132,7 +142,7 @@ pipeline {
             }
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
 
               viewEnv {
                 withTools("${env.TOOLS_VERSION}") {
@@ -174,7 +184,7 @@ pipeline {
             }
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
               sh "git submodule update --init"
               createVenv("requirements.txt")
               withVenv() {
@@ -245,7 +255,7 @@ pipeline {
             }
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
               sh "git submodule update --init"
               createVenv("requirements.txt")
               withVenv() {
@@ -319,7 +329,7 @@ pipeline {
             }
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
               sh "git submodule update --init"
               createVenv("requirements.txt")
               withVenv() {
@@ -390,7 +400,7 @@ pipeline {
             }
 
             dir("${REPO}") {
-              checkout scm
+              checkout_shallow()
               sh "git submodule update --init"
               createVenv("requirements.txt")
               withVenv() {
